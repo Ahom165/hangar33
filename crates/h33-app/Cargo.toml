@@ -1,0 +1,21 @@
+[package]
+name = "h33-app"
+description = "Hangar 33 — application : winit + boucle fixed-timestep + egui."
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "hangar33"
+path = "src/main.rs"
+
+[dependencies]
+h33-core = { path = "../h33-core" }
+h33-render = { path = "../h33-render" }
+glam = { workspace = true }
+bytemuck = { workspace = true }
+pollster = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }

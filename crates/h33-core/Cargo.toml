@@ -1,0 +1,11 @@
+[package]
+name = "h33-core"
+description = "Hangar 33 — cœur de simulation (ECS léger, économie, logistique, TRNG). Sans dépendance graphique : testable headless et réutilisable côté serveur multijoueur."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+getrandom = { workspace = true }
+
+[dev-dependencies]
+# aucun — les tests sont auto-contenus

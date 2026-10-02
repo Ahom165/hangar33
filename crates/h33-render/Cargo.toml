@@ -1,0 +1,16 @@
+[package]
+name = "h33-render"
+description = "Hangar 33 — rendu wgpu : instancing, caméra orbite, picking, sol procédural."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+bytemuck = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+png = { workspace = true }
+gltf = { workspace = true }
+
+[dev-dependencies]
+pollster = { workspace = true }
