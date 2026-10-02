@@ -58,7 +58,7 @@ impl ApplicationHandler for App {
         }
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("HANGAR 33 — v0.3.6"))
+                .create_window(Window::default_attributes().with_title("HANGAR 33 — v0.3.7"))
                 .expect("création de fenêtre"),
         );
         let mut state = pollster::block_on(GameState::new(window, &self.opts))
@@ -108,11 +108,23 @@ impl ApplicationHandler for App {
 /// dock de palettes). Constante partagée rendu + interaction.
 pub const COMPUTER_POS: glam::Vec3 = glam::Vec3::new(-18.0, 0.0, 21.0);
 
-/// État UI de l'ordinateur (fenêtre HANGAR-OS).
+/// État UI de l'ordinateur : un FAUX BUREAU « HANGAR-OS 11 » (clin d'œil
+/// Windows 11) — barre des tâches, menu Démarrer, fenêtres d'apps.
 #[derive(Default)]
 pub struct ComputerUi {
     pub open: bool,
-    pub tab: usize, // 0 = Boutique, 1 = Colis, 2 = Terminal
+    /// Apps ouvertes du bureau : [Boutique, Colis, Terminal].
+    pub apps: [bool; 3],
+    /// Menu Démarrer déplié.
+    pub start_open: bool,
+    /// Fenêtre « Corbeille » (easter egg).
+    pub trash_open: bool,
+    /// Fenêtre « Ce PC » (easter egg).
+    pub pc_open: bool,
+    /// Recherche du menu Démarrer (décorative).
+    pub start_search: String,
+    /// Demandé par le bureau (bouton Marche/Arrêt) : fermer la session.
+    pub close_request: bool,
     pub input: String,
     pub log: Vec<String>,
     pub order_qty: u32,
@@ -124,11 +136,16 @@ impl ComputerUi {
     pub fn new() -> Self {
         Self {
             open: false,
-            tab: 0,
+            apps: [false; 3],
+            start_open: false,
+            trash_open: false,
+            pc_open: false,
+            start_search: String::new(),
+            close_request: false,
             input: String::new(),
             log: vec![
                 "HANGAR-OS 33 (tty1) — Terminal de gestion du hangar".into(),
-                "Connecté : opérateur@hangar33".into(),
+                "Connecté : operateur@hangar33".into(),
                 "Tape 'help' pour les commandes.".into(),
                 "[ADMIN] pense-bête scotché à l'écran : « le code de la baie".into(),
                 "serveur est le nom du jeu + le numéro du jeu »".into(),
@@ -531,6 +548,8 @@ impl GameState {
             self.unlock_pointer();
             if !self.computer.greeted {
                 self.computer.greeted = true;
+                // Première session : la Boutique est déjà ouverte sur le bureau.
+                self.computer.apps[0] = true;
                 self.computer.log.push("[info] nouvelle session — bienvenue au HANGAR 33.".into());
             }
         }
@@ -569,7 +588,7 @@ impl GameState {
     fn floor_slot_pos(i: usize) -> Vec3 {
         let n = h33_core::balance::FLOOR_PACKAGE_LIMIT as f32;
         let x = i as f32 - (n - 1.0) * 0.5;
-        Vec3::new(x, 0.8, (h33_core::balance::HANGAR_HALF_SIZE + 3) as f32)
+        Vec3::new(x, 0.8, h33_core::balance::DOCK_ZONE_Z)
     }
 
     fn nearest_floor_package(&self) -> Option<usize> {
@@ -807,13 +826,17 @@ impl GameState {
         };
         self.egui_winit.handle_platform_output(&self.window, full.platform_output);
 
-        // Actions UI différées (démarrage / retour menu).
+        // Actions UI différées (démarrage / retour menu / fermeture session).
         if let Some(total) = self.start_request.take() {
             self.start_game(total);
         }
         if self.back_to_menu {
             self.back_to_menu = false;
             self.sim = None;
+        }
+        if self.computer.close_request {
+            self.computer.close_request = false;
+            self.close_computer();
         }
 
         // --- Peinture ---------------------------------------------------------
@@ -979,9 +1002,10 @@ impl GameState {
         let right = self.camera.right();
         let delta = (fwd * move_x + right * move_z).normalize_or_zero() * speed * dt;
         self.camera.pos += delta;
-        // Bornes intérieures (murs à ±33/±27, marge ~1,5 m).
+        // Bornes intérieures (murs à ±33/±24 — marge ~1,5 m ; la zone de
+        // palettes est DANS le hangar, contre le mur sud).
         self.camera.pos.x = self.camera.pos.x.clamp(-31.0, 31.0);
-        self.camera.pos.z = self.camera.pos.z.clamp(-25.0, 25.0);
+        self.camera.pos.z = self.camera.pos.z.clamp(-22.5, 22.5);
         self.camera.pos.y = FpCamera::EYE_HEIGHT;
     }
 
@@ -1032,8 +1056,8 @@ impl GameState {
 
         let Some(sim) = self.sim.as_ref() else { return (cubes, glb) };
 
-        // Dock de palettes (hors grille, sud du hangar — allée de service).
-        let dock_z = (h33_core::balance::HANGAR_HALF_SIZE + 3) as f32;
+        // Dock de palettes (zone de livraison, DANS le hangar au sud).
+        let dock_z = h33_core::balance::DOCK_ZONE_Z;
         let n_slots = h33_core::balance::FLOOR_PACKAGE_LIMIT as f32;
         for i in 0..h33_core::balance::FLOOR_PACKAGE_LIMIT {
             let x = i as f32 - (n_slots - 1.0) * 0.5;
@@ -1073,6 +1097,21 @@ impl GameState {
                     }
                 }
             }
+        }
+
+        // Marqueur "LIVRAISON" : losange doré pulsant qui flotte au-dessus de
+        // la zone de palettes tant qu'un colis y attend (impossible à rater,
+        // même depuis l'autre bout du hangar).
+        if !sim.floor.is_empty() {
+            let bob = (t * 2.4).sin() * 0.25;
+            let spin = t * 1.2;
+            let glow = 0.75 + 0.25 * (t * 3.0).sin();
+            cubes.push(InstanceRaw::new(
+                glam::Vec3::new(0.0, 2.8 + bob, dock_z),
+                spin,
+                glam::Vec3::splat(0.45),
+                [2.0 * glow, 1.6 * glow, 0.4, 1.0],
+            ));
         }
 
         // Grille : tapis + machines.
@@ -1238,8 +1277,8 @@ impl GameState {
             // Interaction F (dock de palettes) : acheter, ouvrir (F), vendre
             // tout (F) — la boucle "en monde" qui remplace le panneau latéral.
             let saved = (self.camera.pos, self.camera.yaw);
-            self.camera.pos = Vec3::new(-11.5, FpCamera::EYE_HEIGHT, 25.5);
-            self.camera.yaw = std::f32::consts::FRAC_PI_2; // regarde le dock (+Z)
+            self.camera.pos = Vec3::new(-11.5, FpCamera::EYE_HEIGHT, 22.3);
+            self.camera.yaw = std::f32::consts::FRAC_PI_2; // regarde le dock (+Z, désormais DANS le hangar)
             assert!(self.sim.as_mut().unwrap().manual_buy_package(), "smoke: achat colis dock");
             self.interact_floor(); // F : ouvre
             assert!(
@@ -1354,7 +1393,7 @@ impl GameState {
             // Ouvre HANGAR-OS (onglet Terminal) et tape de VRAIES commandes :
             // elles agissent réellement sur la sim (commande de colis payée).
             self.computer.open = true;
-            self.computer.tab = 2;
+            self.computer.apps[2] = true; // app Terminal ouverte sur le faux bureau
             self.near_computer = true;
             for c in ["help", "status", "stock", "order colis 5"] {
                 let mut io = ui::TermIo {

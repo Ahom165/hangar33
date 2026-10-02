@@ -1,4 +1,4 @@
-# HANGAR 33 — v0.3.6 « L'Ordinateur »
+# HANGAR 33 — v0.3.7 « HANGAR-OS 11 »
 
 > Déballe. Automatise. Trouve la bague.
 >
@@ -7,6 +7,22 @@
 > **le déballage de colis mystères**, pilotable depuis **l'ordinateur du hangar**.
 
 ![smoke-test](docs/screenshots/smoke-fp.png)
+
+## Nouveautés v0.3.7
+
+- **HANGAR-OS 11** : l'ordinateur du hangar est devenu un **faux bureau Windows 11**
+  (clin d'œil assumé) — fond d'écran « bloom », icônes Ce PC / Corbeille (easter
+  eggs), **barre des tâches centrée** avec bouton Démarrer et horloge, **menu
+  Démarrer** (recherche, apps épinglées, Éteindre) et **fenêtres d'apps**
+  superposables : Boutique (Store), Colis (Livraisons), Terminal.
+- **Livraisons visibles (fix)** : la zone de palettes est maintenant **DANS le
+  hangar** (contre le mur sud, marqueur doré pulsant au-dessus). Avant, le dock
+  était à l'extérieur des murs : les colis « livrés » étaient invisibles.
+  La barre du haut affiche un **compte à rebours** (« Livraison dans 7 s »).
+- **VM bootable** : le code secret cherche maintenant une **ISO Windows** dans
+  Téléchargements/Bureau/Documents/C:\ISO (Windows : branchée en DVD de boot,
+  2 Go de RAM) — et sur Linux il démarre QEMU sur le **firmware TianoCore
+  (OVMF)** : le Boot Manager UEFI s'affiche même sans ISO.
 
 ## Nouveautés v0.3
 

@@ -70,6 +70,27 @@ Découpage incrémental. Chaque étape est jouable à la fin de l'étape.
 - [x] Smoke-test étendu : chaîne AutoBuyer→Dépaqueteur→**Bras**→Guichet
       productive, commandes terminal réelles, 2 captures (FP + terminal)
 
+## v0.3.7 — « HANGAR-OS 11 » ✅ (fait)
+
+- [x] **Faux bureau Windows 11** dans l'ordinateur du hangar : fond d'écran
+      « bloom » (dégradé + auréoles), icônes Ce PC / Corbeille (easter eggs),
+      barre des tâches centrée (Démarrer + apps + horloge de hangar),
+      menu Démarrer (recherche, tuiles épinglées, Éteindre) et fenêtres
+      d'apps superposables (Boutique / Colis / Terminal)
+- [x] **Fix livraisons invisibles** : la zone de palettes était À L'EXTÉRIEUR
+      des murs (z = half + 3) — déplacée DANS le hangar (mur sud,
+      `balance::DOCK_ZONE_Z`), clamp joueur resserré, marqueur doré pulsant
+      au-dessus du dock, compte à rebours de livraison dans le HUD,
+      toasts localisés (« mur SUD »)
+- [x] **VM bootable** (code secret) : ISO Windows auto-détectée
+      (Téléchargements/Bureau/Documents/C:\ISO) et branchée en DVD de boot
+      Hyper-V (2 Go RAM, FirstBootDevice=DVD) / `-cdrom -boot order=d`
+      QEMU ; firmware **TianoCore (OVMF)** détecté sur Linux (pflash +
+      NVRAM copiée en writable, repli `-bios`, repli SeaBIOS) ; tests
+      unitaires (firmware_args, préférence ISO, dossiers de recherche)
+- [x] Smoke-test revalidé : dock F-interactif à la nouvelle position,
+      bureau HANGAR-OS 11 capturé en screenshot
+
 ## v0.4 — « Multijoueur coop » (3-4 semaines, l'architecture est déjà là)
 
 - [ ] Serveur dédié headless = `h33-core` + QUIC/TCP (quinn), commandes

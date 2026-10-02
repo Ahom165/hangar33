@@ -177,7 +177,11 @@ impl Sim {
                 DeliveryKind::Stock(si, qty) => {
                     self.stock[si.stock_index()] += qty;
                     self.events.push(GameEvent::Toast {
-                        text: format!("Livraison : {}× {} sur le quai.", qty, si.name()),
+                        text: format!(
+                            "Livraison : {}× {} — pose-les avec les touches 1-9.",
+                            qty,
+                            si.name()
+                        ),
                         severity: Severity::Info,
                     });
                 }
@@ -194,7 +198,9 @@ impl Sim {
                     }
                     self.pending_packages += n - drop;
                     self.events.push(GameEvent::Toast {
-                        text: format!("Livraison : {} colis sur la zone de palettes.", drop),
+                        text: format!(
+                            "Livraison : {drop} colis sur la zone de palettes (mur SUD, marqueur doré)."
+                        ),
                         severity: Severity::Info,
                     });
                 }

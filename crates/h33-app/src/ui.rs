@@ -80,13 +80,18 @@ pub fn draw(ctx: &egui::Context, b: &mut UiBorrow) {
         return;
     }
     draw_top_bar(ctx, b);
+    if b.computer.open {
+        // BUREAU « HANGAR-OS 11 » : fond d'écran, icônes, fenêtres, taskbar.
+        draw_computer(ctx, b);
+        draw_toasts(ctx, b);
+        return;
+    }
     draw_hint(ctx, b);
     draw_selected_panel(ctx, b);
     draw_toasts(ctx, b);
     draw_help(ctx, b);
     draw_computer_prompt(ctx, b);
     draw_floor_prompt(ctx, b);
-    draw_computer(ctx, b);
     if victory {
         // Split final : le panneau victoire couvre le centre.
         let UiBorrow { sim, back_to_menu, .. } = b;
@@ -183,8 +188,13 @@ fn draw_top_bar(ctx: &egui::Context, b: &mut UiBorrow) {
             ui.label(format!("Colis restants : {}", h33_core::sim::format_count(sim.eco.packages_left)));
             ui.separator();
             if !sim.deliveries.is_empty() {
+                // Compte à rebours de la PROCHAINE livraison (le joueur doit
+                // toujours savoir quand sa commande arrive).
+                let now = sim.elapsed_s;
+                let next = sim.deliveries.iter().map(|d| d.eta_s).fold(f64::INFINITY, f64::min);
+                let remaining = (next - now).max(0.0);
                 ui.label(
-                    RichText::new(format!("Livraisons en cours : {}", sim.deliveries.len()))
+                    RichText::new(format!("Livraison dans {remaining:.0} s ({} en route)", sim.deliveries.len()))
                         .color(sev_color(Severity::Info)),
                 );
                 ui.separator();
@@ -310,36 +320,471 @@ fn draw_computer_prompt(ctx: &egui::Context, b: &UiBorrow) {
         });
 }
 
+// ======================================================================
+//  Bureau « HANGAR-OS 11 » : un faux Windows 11 dans le hangar.
+//  Fond d'écran "bloom", icônes, barre des tâches centrée, menu Démarrer,
+//  fenêtres d'apps (Boutique / Colis / Terminal) + Corbeille et Ce PC.
+// ======================================================================
+
+fn win_accent() -> Color32 {
+    Color32::from_rgb(0, 120, 212) // bleu Windows
+}
+
+fn taskbar_fill() -> Color32 {
+    Color32::from_rgba_unmultiplied(22, 24, 30, 236)
+}
+
+fn mica_fill() -> Color32 {
+    Color32::from_rgba_unmultiplied(32, 34, 42, 248)
+}
+
+fn win_text() -> Color32 {
+    Color32::from_rgb(235, 240, 250)
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    Color32::from_rgb(
+        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
+        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
+        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
+    )
+}
+
 fn draw_computer(ctx: &egui::Context, b: &mut UiBorrow) {
-    if !b.computer.open {
-        return;
-    }
-    let tabs = ["Boutique", "Colis", "Terminal"];
-    egui::Window::new(RichText::new("HANGAR-OS 33 — terminal de gestion").strong().color(terminal_green()))
-        .default_width(720.0)
-        .default_height(480.0)
-        .collapsible(false)
+    // 1) Fond d'écran plein écran (sous la barre HUD du jeu).
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.fill(Color32::from_rgb(5, 10, 30)))
         .show(ctx, |ui| {
-            let money = b.sim.as_ref().map_or(0.0, |s| s.eco.money);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Solde : {}", fmt_eur(money))).color(money_color()).strong());
-                ui.separator();
-                for (i, t) in tabs.iter().enumerate() {
-                    if ui.selectable_label(b.computer.tab == i, RichText::new(*t).strong()).clicked() {
-                        b.computer.tab = i;
-                    }
-                    ui.separator();
-                }
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new("Échap : quitter").weak().small());
-                });
-            });
+            paint_wallpaper(ui);
+            paint_desktop_icons(ui, b);
+        });
+
+    // 2) Fenêtres d'apps — plusieurs peuvent être ouvertes à la fois,
+    //    comme sur un vrai bureau. Le X de la fenêtre ferme l'app.
+    let mut shop = b.computer.apps[0];
+    egui::Window::new("Boutique — HANGAR-OS Store")
+        .open(&mut shop)
+        .resizable(true)
+        .default_width(640.0)
+        .default_height(440.0)
+        .frame(egui::Frame::default().fill(mica_fill()).inner_margin(egui::Margin::same(10)))
+        .show(ctx, |ui| draw_shop_tab(ui, b));
+    b.computer.apps[0] = shop;
+
+    let mut packages = b.computer.apps[1];
+    egui::Window::new("Colis — Livraisons")
+        .open(&mut packages)
+        .resizable(true)
+        .default_width(520.0)
+        .default_height(400.0)
+        .frame(egui::Frame::default().fill(mica_fill()).inner_margin(egui::Margin::same(10)))
+        .show(ctx, |ui| draw_packages_tab(ui, b));
+    b.computer.apps[1] = packages;
+
+    let mut terminal = b.computer.apps[2];
+    egui::Window::new("Terminal — operateur@hangar33")
+        .open(&mut terminal)
+        .resizable(true)
+        .default_size([680.0, 430.0])
+        .frame(
+            egui::Frame::default()
+                .fill(Color32::from_rgb(12, 13, 16))
+                .inner_margin(egui::Margin::same(8)),
+        )
+        .show(ctx, |ui| draw_terminal_tab(ui, b));
+    b.computer.apps[2] = terminal;
+
+    // 3) Easter eggs : Corbeille + Ce PC (icônes du bureau).
+    let mut trash = b.computer.trash_open;
+    egui::Window::new("Corbeille")
+        .open(&mut trash)
+        .default_width(360.0)
+        .frame(egui::Frame::default().fill(mica_fill()).inner_margin(egui::Margin::same(10)))
+        .show(ctx, |ui| {
+            ui.add_space(6.0);
+            ui.label(RichText::new("La corbeille est vide.").strong());
+            ui.label("(on a vendu le contenu — c'est littéralement le jeu.)");
+        });
+    b.computer.trash_open = trash;
+
+    let mut pc = b.computer.pc_open;
+    egui::Window::new("Ce PC")
+        .open(&mut pc)
+        .default_width(430.0)
+        .frame(egui::Frame::default().fill(mica_fill()).inner_margin(egui::Margin::same(10)))
+        .show(ctx, |ui| {
+            ui.label(RichText::new("HANGAR-PC").strong().size(18.0));
             ui.separator();
-            match b.computer.tab {
-                0 => draw_shop_tab(ui, b),
-                1 => draw_packages_tab(ui, b),
-                _ => draw_terminal_tab(ui, b),
+            ui.label("Processeur  : Bras robot x9 (0,25 s/cycle)");
+            ui.label("Mémoire     : 500 000 000 colis adressables");
+            ui.label("Disque C:   : 3,7 Po de cartons non ouverts");
+            ui.label("Carte son   : vrombissement de générateur continu");
+            ui.label("Système     : HANGAR-OS 11 (build 33.33)");
+            ui.separator();
+            ui.label(
+                RichText::new("Besoin d'une VRAIE machine virtuelle ? Le vieux code admin du Terminal traîne toujours quelque part… (nom du jeu + numéro)")
+                    .weak()
+                    .small(),
+            );
+        });
+    b.computer.pc_open = pc;
+
+    // 4) Menu Démarrer (au-dessus des fenêtres).
+    if b.computer.start_open {
+        draw_start_menu(ctx, b);
+    }
+
+    // 5) Barre des tâches (toujours au-dessus).
+    draw_taskbar(ctx, b);
+}
+
+/// Fond d'écran : dégradé bleu nuit + auréoles translucides (façon "bloom").
+fn paint_wallpaper(ui: &mut egui::Ui) {
+    let rect = ui.max_rect();
+    let painter = ui.painter();
+    let steps = 40;
+    let strip_h = rect.height() / steps as f32;
+    let top = Color32::from_rgb(5, 10, 30);
+    let mid = Color32::from_rgb(0, 70, 150);
+    let bottom = Color32::from_rgb(0, 120, 212);
+    for i in 0..steps {
+        let f = i as f32 / (steps - 1).max(1) as f32;
+        let c = if f < 0.55 {
+            lerp_color(top, mid, f / 0.55)
+        } else {
+            lerp_color(mid, bottom, (f - 0.55) / 0.45)
+        };
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.top() + i as f32 * strip_h),
+                egui::vec2(rect.width(), strip_h + 1.0),
+            ),
+            egui::CornerRadius::ZERO,
+            c,
+        );
+    }
+    // « Bloom » : auréoles concentriques translucides au centre.
+    let (cx, cy) = (rect.center().x, rect.center().y);
+    let petals = [
+        (0.0, 0.0, 210.0),
+        (150.0, 30.0, 150.0),
+        (-140.0, -70.0, 170.0),
+        (60.0, -160.0, 130.0),
+        (-80.0, 130.0, 140.0),
+        (190.0, -60.0, 90.0),
+    ];
+    for (i, (dx, dy, r)) in petals.into_iter().enumerate() {
+        let a = 30u8.saturating_sub((i as u8) * 4);
+        painter.circle_filled(egui::pos2(cx + dx, cy + dy), r, Color32::from_rgba_unmultiplied(70, 150, 255, a));
+        painter.circle_filled(
+            egui::pos2(cx + dx, cy + dy),
+            r * 0.6,
+            Color32::from_rgba_unmultiplied(110, 185, 255, a.saturating_add(12)),
+        );
+    }
+    painter.text(
+        egui::pos2(rect.right() - 18.0, rect.bottom() - 72.0),
+        egui::Align2::RIGHT_BOTTOM,
+        "HANGAR-OS 11 — édition colis",
+        egui::FontId::proportional(16.0),
+        Color32::from_rgba_unmultiplied(255, 255, 255, 55),
+    );
+}
+
+/// Icône vectorielle générique (pas d'emoji : les fontes egui n'en ont pas).
+fn paint_icon(painter: &egui::Painter, kind: &str, c: egui::Pos2) {
+    let s = egui::Stroke::new(2.2_f32, win_text());
+    match kind {
+        "start" => {
+            // Logo : 4 carrés bleus.
+            let q = 7.5;
+            let g = 2.0;
+            let off = |dx: f32, dy: f32| egui::pos2(c.x + dx - q - g / 2.0, c.y + dy - q - g / 2.0);
+            for (dx, dy) in [(-(q + g), -(q + g)), (0.0, -(q + g)), (-(q + g), 0.0), (0.0, 0.0)] {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(off(dx, dy), egui::vec2(q, q)),
+                    egui::CornerRadius::same(1),
+                    win_accent(),
+                );
             }
+        }
+        "shop" => {
+            // Storefront : auvent + corps.
+            painter.rect_filled(
+                egui::Rect::from_center_size(egui::pos2(c.x, c.y + 4.0), egui::vec2(26.0, 16.0)),
+                egui::CornerRadius::same(2),
+                Color32::from_rgb(255, 200, 80),
+            );
+            painter.rect_filled(
+                egui::Rect::from_center_size(egui::pos2(c.x, c.y - 8.0), egui::vec2(30.0, 6.0)),
+                egui::CornerRadius::same(2),
+                win_accent(),
+            );
+            painter.rect_filled(
+                egui::Rect::from_center_size(egui::pos2(c.x, c.y + 4.0), egui::vec2(8.0, 8.0)),
+                egui::CornerRadius::same(1),
+                mica_fill(),
+            );
+        }
+        "colis" => {
+            // Carton : corps + ruban.
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, egui::vec2(26.0, 22.0)),
+                egui::CornerRadius::same(2),
+                s,
+                egui::StrokeKind::Middle,
+            );
+            painter.line_segment([egui::pos2(c.x, c.y - 11.0), egui::pos2(c.x, c.y + 11.0)], s);
+            painter.line_segment([egui::pos2(c.x - 13.0, c.y - 4.0), egui::pos2(c.x + 13.0, c.y - 4.0)], s);
+        }
+        "terminal" => {
+            painter.rect_filled(
+                egui::Rect::from_center_size(c, egui::vec2(28.0, 22.0)),
+                egui::CornerRadius::same(2),
+                Color32::from_rgb(14, 15, 18),
+            );
+            painter.rect_stroke(
+                egui::Rect::from_center_size(c, egui::vec2(28.0, 22.0)),
+                egui::CornerRadius::same(2),
+                s,
+                egui::StrokeKind::Middle,
+            );
+            painter.text(
+                egui::pos2(c.x - 8.0, c.y),
+                egui::Align2::LEFT_CENTER,
+                ">_",
+                egui::FontId::monospace(11.0),
+                terminal_green(),
+            );
+        }
+        "trash" => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(egui::pos2(c.x, c.y + 5.0), egui::vec2(26.0, 26.0)),
+                egui::CornerRadius::same(3),
+                s,
+                egui::StrokeKind::Middle,
+            );
+            painter.line_segment([egui::pos2(c.x - 15.0, c.y - 8.0), egui::pos2(c.x + 15.0, c.y - 8.0)], s);
+            painter.line_segment([egui::pos2(c.x - 7.0, c.y - 8.0), egui::pos2(c.x - 7.0, c.y - 14.0)], s);
+            painter.line_segment([egui::pos2(c.x + 7.0, c.y - 8.0), egui::pos2(c.x + 7.0, c.y - 14.0)], s);
+            for dx in [-8.0, 0.0, 8.0] {
+                painter.line_segment([egui::pos2(c.x + dx, c.y + 0.0), egui::pos2(c.x + dx, c.y + 13.0)], s);
+            }
+        }
+        "pc" => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(egui::pos2(c.x, c.y - 2.0), egui::vec2(40.0, 26.0)),
+                egui::CornerRadius::same(3),
+                s,
+                egui::StrokeKind::Middle,
+            );
+            painter.line_segment([egui::pos2(c.x - 8.0, c.y + 13.0), egui::pos2(c.x + 8.0, c.y + 13.0)], s);
+            painter.line_segment([egui::pos2(c.x, c.y + 13.0), egui::pos2(c.x, c.y + 19.0)], s);
+            painter.line_segment([egui::pos2(c.x - 14.0, c.y + 19.0), egui::pos2(c.x + 14.0, c.y + 19.0)], s);
+        }
+        _ => {}
+    }
+}
+
+/// Une icône de bureau cliquable (étiquette blanche sous l'icône).
+fn desktop_icon(ui: &mut egui::Ui, top_left: egui::Pos2, kind: &str, label: &str) -> egui::Response {
+    let rect = egui::Rect::from_min_size(top_left, egui::vec2(92.0, 98.0));
+    let resp = ui.allocate_rect(rect, egui::Sense::click());
+    let painter = ui.painter();
+    if resp.hovered() || resp.clicked() {
+        painter.rect_filled(rect, egui::CornerRadius::same(6), Color32::from_rgba_unmultiplied(255, 255, 255, 28));
+    }
+    paint_icon(painter, kind, egui::pos2(rect.center().x, rect.top() + 36.0));
+    painter.text(
+        egui::pos2(rect.center().x, rect.bottom() - 12.0),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        win_text(),
+    );
+    resp
+}
+
+fn paint_desktop_icons(ui: &mut egui::Ui, b: &mut UiBorrow) {
+    let base = ui.max_rect().left_top() + egui::vec2(18.0, 18.0);
+    if desktop_icon(ui, base, "pc", "Ce PC").clicked() {
+        b.computer.pc_open = true;
+        b.computer.start_open = false;
+    }
+    if desktop_icon(ui, base + egui::vec2(0.0, 106.0), "trash", "Corbeille").clicked() {
+        b.computer.trash_open = true;
+        b.computer.start_open = false;
+    }
+}
+
+/// Barre des tâches : bouton Démarrer + apps centrées, horloge à droite.
+fn draw_taskbar(ctx: &egui::Context, b: &mut UiBorrow) {
+    const BAR_H: f32 = 56.0;
+    const BTN: f32 = 42.0;
+    egui::Area::new(egui::Id::new("h33_taskbar"))
+        .anchor(egui::Align2::LEFT_BOTTOM, [0.0, 0.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let screen = ctx.screen_rect();
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(screen.left(), screen.bottom() - BAR_H),
+                egui::vec2(screen.width(), BAR_H),
+            );
+            ui.allocate_rect(rect, egui::Sense::hover());
+            let painter = ui.painter().clone();
+            painter.rect_filled(
+                rect,
+                egui::CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 },
+                taskbar_fill(),
+            );
+
+            // Groupe centré : Démarrer + 3 apps.
+            let apps: [(&str, &str, usize); 3] = [
+                ("shop", "Boutique", 0),
+                ("colis", "Colis", 1),
+                ("terminal", "Terminal", 2),
+            ];
+            let group_w = BTN + 6.0 + apps.len() as f32 * (BTN + 6.0);
+            let mut x = rect.center().x - group_w / 2.0;
+
+            // Démarrer.
+            let r = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 7.0), egui::vec2(BTN, BTN));
+            let resp = ui.allocate_rect(r, egui::Sense::click());
+            let hl = resp.hovered() || b.computer.start_open;
+            if hl {
+                painter.rect_filled(r, egui::CornerRadius::same(6), Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+            }
+            paint_icon(&painter, "start", r.center());
+            if resp.clicked() {
+                b.computer.start_open = !b.computer.start_open;
+            }
+            resp.on_hover_text("Démarrer");
+            x += BTN + 6.0;
+
+            for (kind, label, idx) in apps {
+                let r = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 7.0), egui::vec2(BTN, BTN));
+                let resp = ui.allocate_rect(r, egui::Sense::click());
+                let active = b.computer.apps[idx];
+                if resp.hovered() || active {
+                    painter.rect_filled(r, egui::CornerRadius::same(6), Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+                }
+                paint_icon(&painter, kind, r.center());
+                if active {
+                    // Indicateur d'app ouverte : petit trait accent sous le bouton.
+                    painter.line_segment(
+                        [egui::pos2(r.center().x - 7.0, r.bottom() + 3.0), egui::pos2(r.center().x + 7.0, r.bottom() + 3.0)],
+                        egui::Stroke::new(3.0_f32, win_accent()),
+                    );
+                }
+                if resp.clicked() {
+                    b.computer.apps[idx] = !b.computer.apps[idx];
+                    b.computer.start_open = false;
+                }
+                resp.on_hover_text(label);
+                x += BTN + 6.0;
+            }
+
+            // Horloge (heure de hangar = 09:00 + temps de sim).
+            let elapsed = b.sim.as_ref().map_or(0.0, |s| s.elapsed_s);
+            let total_s = 9 * 3600 + elapsed as u64;
+            let (h, m, s) = ((total_s / 3600) % 24, (total_s / 60) % 60, total_s % 60);
+            painter.text(
+                egui::pos2(rect.right() - 16.0, rect.center().y - 8.0),
+                egui::Align2::RIGHT_CENTER,
+                format!("{h:02}:{m:02}:{s:02}"),
+                egui::FontId::monospace(15.0),
+                win_text(),
+            );
+            painter.text(
+                egui::pos2(rect.right() - 16.0, rect.center().y + 9.0),
+                egui::Align2::RIGHT_CENTER,
+                "HANGAR-OS 11 · Échap : hangar",
+                egui::FontId::proportional(10.5),
+                Color32::from_rgba_unmultiplied(255, 255, 255, 120),
+            );
+        });
+}
+
+/// Menu Démarrer : recherche, apps épinglées, utilisateur, éteindre.
+fn draw_start_menu(ctx: &egui::Context, b: &mut UiBorrow) {
+    egui::Area::new(egui::Id::new("h33_start"))
+        .anchor(egui::Align2::LEFT_BOTTOM, [10.0, -64.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::default()
+                .fill(mica_fill())
+                .corner_radius(egui::CornerRadius::same(10))
+                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)))
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_min_size(egui::vec2(520.0, 380.0));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut b.computer.start_search)
+                            .hint_text("Rechercher une app…")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("Épinglé").strong().size(14.0));
+                    ui.add_space(6.0);
+
+                    // Grille 4 tuiles : 3 apps + Corbeille.
+                    let tiles: [(&str, &str, &str); 4] = [
+                        ("shop", "Boutique", "Store du hangar"),
+                        ("colis", "Colis", "Livraisons"),
+                        ("terminal", "Terminal", "Ligne de commande"),
+                        ("trash", "Corbeille", "Vide, promis"),
+                    ];
+                    let tile = egui::vec2(116.0, 96.0);
+                    for row in 0..2 {
+                        ui.horizontal(|ui| {
+                            for col in 0..2 {
+                                let (kind, label, sub) = tiles[row * 2 + col];
+                                let (r_rect, r) = ui.allocate_exact_size(tile, egui::Sense::click());
+                                let painter = ui.painter().clone();
+                                if r.hovered() {
+                                    painter.rect_filled(r_rect, egui::CornerRadius::same(6), Color32::from_rgba_unmultiplied(255, 255, 255, 18));
+                                }
+                                paint_icon(&painter, kind, egui::pos2(r_rect.center().x, r_rect.top() + 30.0));
+                                painter.text(
+                                    egui::pos2(r_rect.center().x, r_rect.bottom() - 30.0),
+                                    egui::Align2::CENTER_CENTER,
+                                    label,
+                                    egui::FontId::proportional(13.0),
+                                    win_text(),
+                                );
+                                painter.text(
+                                    egui::pos2(r_rect.center().x, r_rect.bottom() - 14.0),
+                                    egui::Align2::CENTER_CENTER,
+                                    sub,
+                                    egui::FontId::proportional(10.0),
+                                    Color32::from_rgba_unmultiplied(255, 255, 255, 130),
+                                );
+                                if r.clicked() {
+                                    match kind {
+                                        "shop" => b.computer.apps[0] = true,
+                                        "colis" => b.computer.apps[1] = true,
+                                        "terminal" => b.computer.apps[2] = true,
+                                        _ => b.computer.trash_open = true,
+                                    }
+                                    b.computer.start_open = false;
+                                }
+                            }
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Operateur 33").strong());
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            if ui.button("Éteindre").clicked() {
+                                b.computer.start_open = false;
+                                b.computer.close_request = true;
+                            }
+                        });
+                    });
+                });
         });
 }
 
@@ -581,7 +1026,9 @@ pub(crate) fn terminal_exec(cmd: String, io: &mut TermIo) {
             if what == "colis" || what == "packages" {
                 let n: u64 = rest.and_then(|r| r.parse().ok()).unwrap_or(io.package_qty);
                 match sim.order_packages(n) {
-                    Ok(()) => io.log.push(format!("commande : {n} colis payés, livraison en route.")),
+                    Ok(()) => io.log.push(format!(
+                        "commande : {n} colis payés, livraison en route vers la zone de palettes (mur SUD)."
+                    )),
                     Err(e) => io.log.push(format!("erreur : {e}")),
                 }
                 return;

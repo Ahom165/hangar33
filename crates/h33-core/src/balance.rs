@@ -71,6 +71,12 @@ pub const AUTO_BUY_PERIOD_MAX_S: f32 = 10.0;
 /// Limite de colis posés dans la zone de palettes (déballage manuel).
 pub const FLOOR_PACKAGE_LIMIT: usize = 24;
 
+/// Position Z (profondeur) de la ZONE DE PALETTES : DANS le hangar, contre
+/// le mur sud (les murs sont à ±HANGAR_HALF_SIZE). Avant v0.3.7 le dock
+/// était À L'EXTÉRIEUR (z = half + 3) : les colis « livrés » étaient
+/// invisibles derrière le mur — d'où « les colis ne se livrent pas ».
+pub const DOCK_ZONE_Z: f32 = 20.5;
+
 /// Cycle de traitement par la machine : distance visuelle [0..1] par seconde
 /// d'avancement du bras / de l'animation.
 pub const BELT_SLOT_VIS_SPEED: f32 = 1.0;
