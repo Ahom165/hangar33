@@ -13,6 +13,10 @@
 //!    Bureau, Documents, C:\ISO) comme DVD de boot (2 Go de RAM), la démarre
 //!    et ouvre la console VMConnect. Sans ISO : la VM démarre quand même
 //!    (PXE/UEFI) et le message explique comment fournir une ISO.
+//!    AUTO-RÉPARATION : si Start-VM échoue (ex. fichier d'état .vmgs jamais
+//!    créé sur une VM à moitié provisionnée — bug Hyper-V/Win11), le script
+//!    redémarre le service vmms, SUPPRIME la VM, la recrée proprement avec
+//!    tout branché avant le premier boot, et retente une seconde fois.
 //!  - macOS     : UTM (front-end Virtualization.framework) s'il est là.
 //!
 //! Aucune sortie n'est attendue du process : on spawn détaché et on
@@ -256,7 +260,8 @@ fn hyper_v() -> Result<String, String> {
         .spawn()
         .map(|_| format!(
             "séquence Hyper-V lancée — si Windows demande l'autorisation (UAC), ACCEPTE : \
-             la VM '{VM_NAME}' est créée si besoin, boote sur la première ISO Windows trouvée \
+             la VM '{VM_NAME}' est créée si besoin (et RÉPARÉE automatiquement si elle \
+             refuse de démarrer), boote sur la première ISO Windows trouvée \
              (Téléchargements, Bureau, Documents, C:\\ISO) sinon sur son firmware, et sa console s'ouvre."
         ))
         .map_err(|e| format!("Impossible de lancer PowerShell : {e}"))
@@ -283,39 +288,84 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   exit 0
 }
 
+# ISO bootable ? (préférence pour une ISO Windows — le rêve du joueur)
+function Find-Iso {
+  $isoDirs = @((Join-Path $env:USERPROFILE 'Downloads'), (Join-Path $env:USERPROFILE 'Téléchargements'), (Join-Path $env:USERPROFILE 'Desktop'), (Join-Path $env:USERPROFILE 'Documents'), 'C:\ISO')
+  $isos = @()
+  foreach ($d in $isoDirs) {
+    if (Test-Path $d) { $isos += @(Get-ChildItem -Path $d -Filter *.iso -File -ErrorAction SilentlyContinue) }
+  }
+  if ($isos.Count -eq 0) { return $null }
+  $winIso = $isos | Where-Object { $_.Name -match 'win' } | Select-Object -First 1
+  if ($winIso) { return $winIso }
+  return ($isos | Select-Object -First 1)
+}
+
+# Crée la VM fraîche, AVEC tout branché AVANT le premier boot (l'ordre importe :
+# c'est le premier démarrage qui fait écrire à vmms les fichiers d'état).
+function New-HangarVm([string]$isoPath) {
+  # Gen 2 (UEFI), sans disque : boote sur le DVD branché ci-dessous, sinon PXE.
+  New-VM -Name $vmName -Generation 2 -MemoryStartupBytes 536870912 -NoVHD | Out-Null
+  Start-Sleep -Milliseconds 800
+  if ($isoPath) {
+    # 2 Go pour l'installatrice + DVD branché + boot device = DVD.
+    Set-VMMemory -VMName $vmName -StartupBytes 2147483648
+    $dvd = Add-VMDvdDrive -VMName $vmName -Path $isoPath -Passthru
+    Set-VMFirmware -VMName $vmName -FirstBootDevice $dvd
+  } else {
+    Set-VMFirmware -VMName $vmName -SecureBootTemplate MicrosoftUEFICertificateAuthority
+  }
+}
+
+# (Re)branche une ISO sur une VM déjà existante (l'utilisateur a pu déposer
+# une ISO depuis la dernière tentative).
+function Attach-Iso([string]$isoPath) {
+  Set-VMMemory -VMName $vmName -StartupBytes 2147483648
+  Get-VMDvdDrive -VMName $vmName | Remove-VMDvdDrive -ErrorAction SilentlyContinue
+  $dvd = Add-VMDvdDrive -VMName $vmName -Path $isoPath -Passthru
+  Set-VMFirmware -VMName $vmName -FirstBootDevice $dvd
+}
+
 try {
   # Module Hyper-V présent ? (sinon : fonctionnalité Windows non activée)
   if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
     Fail ("Hyper-V n'est pas activé sur ce Windows." + [char]10 + [char]10 + "Panneau de configuration > Programmes > Activer ou désactiver des fonctionnalités Windows > cocher Hyper-V, puis redémarre. (Windows Pro requis)" + [char]10 + [char]10 + "Astuce : le code secret lance aussi une VM sous Linux (QEMU/KVM).")
   }
 
-  # ISO bootable ? (préférence pour une ISO Windows — le rêve du joueur)
-  $isoDirs = @((Join-Path $env:USERPROFILE 'Downloads'), (Join-Path $env:USERPROFILE 'Téléchargements'), (Join-Path $env:USERPROFILE 'Desktop'), (Join-Path $env:USERPROFILE 'Documents'), 'C:\ISO')
-  $isos = @()
-  foreach ($d in $isoDirs) {
-    if (Test-Path $d) { $isos += @(Get-ChildItem -Path $d -Filter *.iso -File -ErrorAction SilentlyContinue) }
-  }
-  $iso = $null
-  if ($isos.Count -gt 0) {
-    $winIso = $isos | Where-Object { $_.Name -match 'win' } | Select-Object -First 1
-    $iso = if ($winIso) { $winIso } else { $isos | Select-Object -First 1 }
-  }
+  $iso = Find-Iso
+  $isoPath = $null
+  if ($iso) { $isoPath = $iso.FullName }
 
   $vm = Get-VM -Name $vmName -ErrorAction SilentlyContinue
   if (-not $vm) {
-    # Gen 2 (UEFI), sans disque : boote sur le DVD branché ci-dessous, sinon PXE.
-    $vm = New-VM -Name $vmName -Generation 2 -MemoryStartupBytes 536870912 -NoVHD | Out-Null
-    Set-VMFirmware -VMName $vmName -SecureBootTemplate MicrosoftUEFICertificateAuthority
-    $vm = Get-VM -Name $vmName
+    New-HangarVm $isoPath
+  } elseif ($isoPath) {
+    Attach-Iso $isoPath
   }
-  if ($iso) {
-    # 2 Go pour l'installatrice + DVD branché + boot device = DVD.
-    Set-VMMemory -VMName $vmName -StartupBytes 2147483648
-    Get-VMDvdDrive -VMName $vmName | Remove-VMDvdDrive -ErrorAction SilentlyContinue
-    $dvd = Add-VMDvdDrive -VMName $vmName -Path $iso.FullName -Passthru
-    Set-VMFirmware -VMName $vmName -FirstBootDevice $dvd
+
+  $vm = Get-VM -Name $vmName
+  if ($vm.State -ne 'Running') {
+    try {
+      Start-VM -Name $vmName -ErrorAction Stop
+    } catch {
+      # AUTO-RÉPARATION : la VM existe mais refuse de démarrer — ex. bug
+      # Hyper-V/Win11 « Microsoft Guest Runtime State ... .vmgs introuvable »
+      # (fichier d'état jamais écrit pour une VM à moitié provisionnée).
+      # Solution : vmms redémarré + VM supprimée + recréation propre + 2e essai.
+      $firstErr = $_.Exception.Message
+      Stop-VM -Name $vmName -TurnOff -Force -ErrorAction SilentlyContinue
+      Restart-Service vmms -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Seconds 2
+      Remove-VM -Name $vmName -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Seconds 1
+      New-HangarVm $isoPath
+      try {
+        Start-VM -Name $vmName -ErrorAction Stop
+      } catch {
+        Fail ("HANGAR-OS a même réessayé après avoir recréé la VM, sans succès." + [char]10 + [char]10 + "Première erreur : " + $firstErr + [char]10 + [char]10 + "Deuxième erreur : " + $_.Exception.Message + [char]10 + [char]10 + "Solutions manuelles : 1) Gestionnaire Hyper-V > clic droit sur HANGAR33-VM > Supprimer, puis retape le code. 2) Redémarre le PC (le service Hyper-V repart propre).")
+      }
+    }
   }
-  if ($vm.State -ne 'Running') { Start-VM -Name $vmName }
   Start-Process vmconnect.exe -ArgumentList @('localhost', $vmName)
 } catch {
   Fail ("HANGAR-OS n'a pas réussi à préparer la VM :" + [char]10 + $_.Exception.Message)

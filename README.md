@@ -1,4 +1,4 @@
-# HANGAR 33 — v0.3.7 « HANGAR-OS 11 »
+# HANGAR 33 — v0.3.9 « HANGAR-OS 11 »
 
 > Déballe. Automatise. Trouve la bague.
 >
@@ -7,6 +7,18 @@
 > **le déballage de colis mystères**, pilotable depuis **l'ordinateur du hangar**.
 
 ![smoke-test](docs/screenshots/smoke-fp.png)
+
+## Nouveautés v0.3.9
+
+- **VM Hyper-V auto-réparée (fix)** : sur certains Windows 11, la VM créée à la
+  volée refuse de démarrer avec « Microsoft Guest Runtime State ... .vmgs
+  introuvable » (fichier d'état jamais écrit pour une VM à moitié provisionnée).
+  Le script du code secret détecte l'échec, **redémarre le service Hyper-V,
+  supprime la VM, la recrée proprement** (tout branché avant le premier boot)
+  **et retente** — plus de popup d'erreur à gérer à la main.
+- **Exécutable Windows officiel** : publiée en [Release
+  GitHub](https://github.com/Ahom165/hangar33/releases/latest), liaison
+  statique complète (aucune DLL non-système), prête à double-cliquer.
 
 ## Nouveautés v0.3.7
 
@@ -81,7 +93,7 @@ Premier lancement : écran-titre → choisis le nombre total de colis (slider
 
 > **Tu veux juste JOUER ?** Télécharge l'exécutable prêt à lancer sur la page
 > [Releases](https://github.com/Ahom165/hangar33/releases/latest)
-> (`hangar33-v0.3.8-windows-x64.zip` → décompresser → double-cliquer
+> (`hangar33-v0.3.9-windows-x64.zip` → décompresser → double-cliquer
 > `hangar33.exe`). Aucune installation requise.
 
 Le crate `h33-app` est un binaire natif : le cible MSVC a besoin du **linker
