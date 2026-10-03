@@ -173,6 +173,11 @@ pub struct SceneBatchData {
     pub generator: Vec<InstanceRaw>,
     pub package: Vec<InstanceRaw>,
     pub computer: Vec<InstanceRaw>,
+    // Meshes procéduraux du déballage (sommets blancs tintés par instance).
+    pub open_crate: Vec<InstanceRaw>,
+    pub prism: Vec<InstanceRaw>,
+    pub sphere: Vec<InstanceRaw>,
+    pub torus: Vec<InstanceRaw>,
 }
 
 // ======================================================================
@@ -865,6 +870,10 @@ impl GameState {
             h33_render::renderer::MeshBatch { mesh: &self.assets.machines[7], instances: &batch_data.generator },
             h33_render::renderer::MeshBatch { mesh: &self.assets.package, instances: &batch_data.package },
             h33_render::renderer::MeshBatch { mesh: &self.assets.computer, instances: &batch_data.computer },
+            h33_render::renderer::MeshBatch { mesh: &self.assets.open_crate, instances: &batch_data.open_crate },
+            h33_render::renderer::MeshBatch { mesh: &self.assets.prism, instances: &batch_data.prism },
+            h33_render::renderer::MeshBatch { mesh: &self.assets.sphere, instances: &batch_data.sphere },
+            h33_render::renderer::MeshBatch { mesh: &self.assets.torus, instances: &batch_data.torus },
         ];
 
         // Peinture : scene + egui sur le même encoder.
@@ -1027,6 +1036,10 @@ impl GameState {
             generator: Vec::new(),
             package: Vec::new(),
             computer: Vec::new(),
+            open_crate: Vec::new(),
+            prism: Vec::new(),
+            sphere: Vec::new(),
+            torus: Vec::new(),
         };
 
         // Enveloppe du hangar : une seule instance identité.
@@ -1080,20 +1093,36 @@ impl GameState {
                     ));
                 }
                 Some(items) => {
-                    // Colis ouvert : bac aplati + objets posés dessus.
-                    cubes.push(InstanceRaw::flat(
-                        glam::Vec3::new(x, 0.18, dock_z),
-                        glam::Vec3::new(0.85, 0.25, 0.85),
-                        [0.6, 0.45, 0.28, 1.0],
+                    // Colis ouvert : VRAI carton ouvert (parois + rabats
+                    // rabattus) + objets formés (cylindre/sphère/tore/cube)
+                    // qui sortent du carton avec une animation "pop".
+                    let age = pkg.opened_at_s.map_or(10.0, |o| (t - o as f32).max(0.0));
+                    let pop = ease_out_back((age / 0.55).min(1.0));
+                    let hop_k = (age / 0.45).min(1.0);
+                    let hop = (hop_k * std::f32::consts::PI).sin() * 0.08 * (1.0 - hop_k);
+                    glb.open_crate.push(InstanceRaw::new(
+                        glam::Vec3::new(x, 0.106 + hop, dock_z),
+                        (i as f32 * 1.7).sin() * 0.5,
+                        glam::Vec3::splat(0.92),
+                        [0.85, 0.66, 0.44, 1.0], // kraft
                     ));
-                    for (j, kind) in items.iter().take(6).enumerate() {
-                        let jx = (j % 3) as f32 * 0.28 - 0.28;
-                        let jy = (j / 3) as f32 * 0.28;
+                    // LA BAGUE dans un carton ouvert : pilier de lumière doré.
+                    if items.iter().any(|k| *k == ItemKind::Bague) {
+                        let pulse = 0.7 + 0.3 * (t * 4.0).sin();
                         cubes.push(InstanceRaw::flat(
-                            glam::Vec3::new(x + jx, 0.42 + jy, dock_z),
-                            glam::Vec3::splat(0.22),
-                            item_color(*kind, t),
+                            glam::Vec3::new(x, 1.6, dock_z),
+                            glam::Vec3::new(0.06, 3.0, 0.06),
+                            [2.2 * pulse, 1.8 * pulse, 0.5, 1.0],
                         ));
+                    }
+                    for (j, kind) in items.iter().take(6).enumerate() {
+                        let jx = (j % 3) as f32 * 0.26 - 0.26;
+                        let jz = (j / 3) as f32 * 0.26 - 0.13;
+                        // Les objets grandissent DANS le carton (pop) : le
+                        // scale quasi nul au départ évite de traverser le fond.
+                        let pos = glam::Vec3::new(x + jx, 0.106, dock_z + jz);
+                        let yaw = i as f32 * 0.7 + j as f32 * 1.3;
+                        push_item(&mut cubes, &mut glb, *kind, pos, yaw, pop.max(0.05), t);
                     }
                 }
             }
@@ -1141,7 +1170,7 @@ impl GameState {
                         [0.45, 0.75, 0.9, 1.0],
                     ));
                     // Objet porté : colis fermé = vrai modèle GLB, objets
-                    // dépaquetés = petits cubes colorés.
+                    // dépaquetés = formes distinctes (cylindre/sphère/tore...).
                     if let Some(item) = &belt.item {
                         let px = wx + dx as f32 * (item.progress - 0.5);
                         let pz = wz + dy as f32 * (item.progress - 0.5);
@@ -1153,11 +1182,11 @@ impl GameState {
                                 [1.0, 1.0, 1.0, 1.0],
                             ));
                         } else {
-                            cubes.push(InstanceRaw::flat(
-                                glam::Vec3::new(px, 0.3, pz),
-                                glam::Vec3::splat(0.36),
-                                item_color(item.kind, t),
-                            ));
+                            let yaw = (wx * 3.1 + wz * 5.7) * 0.8;
+                            push_item(
+                                &mut cubes, &mut glb, item.kind,
+                                glam::Vec3::new(px, 0.12, pz), yaw, 1.0, t,
+                            );
                         }
                     }
                 }
@@ -1424,6 +1453,83 @@ impl GameState {
 // ======================================================================
 //  Couleurs
 // ======================================================================
+
+// ======================================================================
+//  Formes des objets dépaquetés (v0.3.10) — le déballage se lit d'un
+//  coup d'œil : chaque objet a SA forme (cylindre, sphère, tore, cube).
+// ======================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemShape {
+    Cube,
+    Prism,
+    Sphere,
+    Torus,
+    Crate,
+}
+
+/// Forme + échelle de base de chaque objet (mesh unitaire -> scale).
+fn item_shape(kind: ItemKind) -> (ItemShape, glam::Vec3) {
+    use ItemKind::*;
+    match kind {
+        CartonVide => (ItemShape::Crate, glam::Vec3::splat(0.3)),
+        Chaussette => (ItemShape::Sphere, glam::Vec3::new(0.26, 0.13, 0.2)),
+        Journal => (ItemShape::Cube, glam::Vec3::new(0.3, 0.05, 0.22)),
+        Tournevis => (ItemShape::Prism, glam::Vec3::new(0.05, 0.32, 0.05)),
+        Bougie => (ItemShape::Prism, glam::Vec3::new(0.14, 0.22, 0.14)),
+        Montre => (ItemShape::Sphere, glam::Vec3::new(0.15, 0.07, 0.15)),
+        ManetteRetro => (ItemShape::Cube, glam::Vec3::new(0.24, 0.09, 0.15)),
+        Figurine => (ItemShape::Sphere, glam::Vec3::new(0.11, 0.28, 0.11)),
+        JeuVideoRare => (ItemShape::Cube, glam::Vec3::new(0.22, 0.045, 0.16)),
+        ConsoleRetro => (ItemShape::Cube, glam::Vec3::new(0.32, 0.1, 0.24)),
+        VaseAncien => (ItemShape::Prism, glam::Vec3::new(0.18, 0.3, 0.18)),
+        BijouFantaisie => (ItemShape::Sphere, glam::Vec3::splat(0.13)),
+        // LA BAGUE : un anneau doré qui tourne sur lui-même.
+        Bague => (ItemShape::Torus, glam::Vec3::splat(0.45)),
+        ColisFerme => (ItemShape::Cube, glam::Vec3::splat(0.3)),
+    }
+}
+
+/// Demi-hauteur de la forme à l'échelle finale (pour poser l'objet sur
+/// une surface). Le carton a son origine au FOND : demi-hauteur nulle.
+fn shape_half_height(shape: ItemShape, scale: glam::Vec3) -> f32 {
+    match shape {
+        ItemShape::Cube | ItemShape::Prism | ItemShape::Sphere => 0.5 * scale.y,
+        ItemShape::Torus => 0.13 * scale.y, // petit rayon du tore
+        ItemShape::Crate => 0.0,
+    }
+}
+
+/// Pousse l'instance de l'objet dans le bon lot (cube procédural ou mesh
+/// procédural), posé sur la surface `pos.y`.
+fn push_item(
+    cubes: &mut Vec<InstanceRaw>,
+    glb: &mut SceneBatchData,
+    kind: ItemKind,
+    pos: glam::Vec3,
+    yaw: f32,
+    scale_mul: f32,
+    t: f32,
+) {
+    let (shape, base_scale) = item_shape(kind);
+    let scale = base_scale * scale_mul;
+    let y = pos.y + shape_half_height(shape, scale);
+    let inst = InstanceRaw::new(glam::Vec3::new(pos.x, y, pos.z), yaw, scale, item_color(kind, t));
+    match shape {
+        ItemShape::Cube => cubes.push(inst),
+        ItemShape::Crate => glb.open_crate.push(inst),
+        ItemShape::Prism => glb.prism.push(inst),
+        ItemShape::Sphere => glb.sphere.push(inst),
+        ItemShape::Torus => glb.torus.push(inst),
+    }
+}
+
+/// Ease-out-back : arrive vite, dépasse un peu, se pose — l'effet "pop".
+fn ease_out_back(x: f32) -> f32 {
+    let c1 = 1.70158_f32;
+    let c3 = c1 + 1.0;
+    1.0 + c3 * (x - 1.0).powi(3) + c1 * (x - 1.0).powi(2)
+}
 
 pub fn item_color(kind: ItemKind, t: f32) -> [f32; 4] {
     match kind {

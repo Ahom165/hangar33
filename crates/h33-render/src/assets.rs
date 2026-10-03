@@ -14,6 +14,15 @@ pub struct GpuAssets {
     pub package: Mesh,
     /// Ordinateur de gestion (HANGAR-OS) posé dans le hangar.
     pub computer: Mesh,
+    // --- Meshes procéduraux (déballage v0.3.10), sommets blancs tintés ---
+    /// Carton ouvert (fond + parois + rabats rabattus).
+    pub open_crate: Mesh,
+    /// Cylindre 8 pans (vases, bougies, tournevis).
+    pub prism: Mesh,
+    /// Sphère low-poly (objets mous / ronds).
+    pub sphere: Mesh,
+    /// Tore (LA BAGUE).
+    pub torus: Mesh,
 }
 
 impl GpuAssets {
@@ -54,6 +63,10 @@ impl GpuAssets {
             ],
             package: load(PACKAGE, "package"),
             computer: load(COMPUTER, "computer"),
+            open_crate: Mesh::open_crate(device),
+            prism: Mesh::prism(device),
+            sphere: Mesh::sphere(device),
+            torus: Mesh::torus(device),
         }
     }
 }

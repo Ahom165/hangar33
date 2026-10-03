@@ -524,3 +524,84 @@ fn le_catalogue_couvre_toutes_les_machines() {
     }
     assert_eq!(ALL_SHOP_ITEMS.len(), 9);
 }
+
+// ======================================================================
+//  Livraisons de colis commandées (fix v0.3.10 : plus de double débit)
+// ======================================================================
+
+#[test]
+fn colis_payes_davance_arrivent_meme_avec_solde_vide() {
+    let mut sim = Sim::new([21u8; 32], 1_000_000);
+    // Portefeuille = EXACTEMENT de quoi payer la commande (et PAS assez
+    // pour un re-débit à la livraison — l'ancien bug donnait 0 colis).
+    sim.eco.money = balance::PACKAGE_PRICE_EUR * 3.0 + 1.0;
+    assert!(sim.order_packages(3).is_ok());
+    assert!((sim.eco.money - 1.0).abs() < 1e-6, "le paiement d'avance doit débiter 3 colis");
+    sim.debug_force_deliveries();
+    sim.tick(1.0 / 60.0);
+    assert_eq!(sim.floor.len(), 3, "les colis PAYÉS doivent être livrés");
+    // Aucun re-débit à la livraison : le solde n'a pas bougé.
+    assert!((sim.eco.money - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn deux_commandes_daffilee_livrent_toutes_les_deux() {
+    let mut sim = Sim::new([22u8; 32], 1_000_000);
+    sim.eco.money = balance::PACKAGE_PRICE_EUR * 30.0; // 360 €
+    assert!(sim.order_packages(10).is_ok());           // -120
+    sim.debug_force_deliveries();
+    sim.tick(1.0 / 60.0);
+    assert_eq!(sim.floor.len(), 10, "1re livraison");
+    assert!(sim.order_packages(10).is_ok());           // -120 (2e commande)
+    sim.debug_force_deliveries();
+    sim.tick(1.0 / 60.0);
+    assert_eq!(sim.floor.len(), 20, "la 2e commande doit arriver AUSSI");
+    // Débit total : exactement 240 € — pas un centime de plus.
+    assert!((sim.eco.money - balance::PACKAGE_PRICE_EUR * 10.0).abs() < 1e-6);
+}
+
+#[test]
+fn colis_en_attente_livres_quand_la_place_se_libere() {
+    let mut sim = Sim::new([23u8; 32], 1_000_000);
+    sim.eco.money = balance::PACKAGE_PRICE_EUR * 100.0;
+    // Zone de palettes PLEINE (achats dock, payés une fois).
+    for _ in 0..balance::FLOOR_PACKAGE_LIMIT {
+        assert!(sim.manual_buy_package());
+    }
+    let money_full = sim.eco.money;
+    assert!(sim.order_packages(4).is_ok());
+    let money_ordered = sim.eco.money;
+    assert!((money_ordered - (money_full - balance::PACKAGE_PRICE_EUR * 4.0)).abs() < 1e-6);
+    sim.debug_force_deliveries();
+    sim.tick(1.0 / 60.0);
+    assert_eq!(sim.floor.len(), balance::FLOOR_PACKAGE_LIMIT);
+    assert_eq!(sim.pending_packages, 4, "payés, en attente d'un slot");
+    // Libère un slot : le colis en attente arrive SANS re-débit.
+    sim.floor.pop();
+    sim.tick(1.0 / 60.0);
+    assert_eq!(sim.pending_packages, 3);
+    assert_eq!(sim.floor.len(), balance::FLOOR_PACKAGE_LIMIT);
+    assert!((sim.eco.money - money_ordered).abs() < 1e-6, "pas de re-débit sur l'attente");
+}
+
+#[test]
+fn pool_epuise_avant_livraison_rembourse_les_colis_payes() {
+    let mut sim = Sim::new([24u8; 32], 1_000_000);
+    sim.eco.money = balance::PACKAGE_PRICE_EUR * 5.0;
+    assert!(sim.order_packages(4).is_ok());
+    sim.eco.packages_left = 0; // le fournisseur s'assèche entre-temps
+    sim.debug_force_deliveries();
+    sim.tick(1.0 / 60.0);
+    assert_eq!(sim.pending_packages, 0, "pas de colis fantôme en attente");
+    assert!((sim.eco.money - balance::PACKAGE_PRICE_EUR * 5.0).abs() < 1e-6, "remboursement intégral");
+}
+
+#[test]
+fn commande_plafonnee_au_pool_restant() {
+    let mut sim = Sim::new([25u8; 32], 1_000_000);
+    sim.eco.money = 1_000_000.0;
+    sim.eco.packages_left = 3;
+    assert!(sim.order_packages(10).is_ok(), "la commande est réduite au pool, pas refusée");
+    // Seuls 3 colis sont facturés (36 €), pas 10 (120 €).
+    assert!((sim.eco.money - (1_000_000.0 - balance::PACKAGE_PRICE_EUR * 3.0)).abs() < 1e-6);
+}

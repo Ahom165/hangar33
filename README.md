@@ -1,4 +1,4 @@
-# HANGAR 33 — v0.3.9 « HANGAR-OS 11 »
+# HANGAR 33 — v0.3.10 « Déballage spectacle »
 
 > Déballe. Automatise. Trouve la bague.
 >
@@ -7,6 +7,24 @@
 > **le déballage de colis mystères**, pilotable depuis **l'ordinateur du hangar**.
 
 ![smoke-test](docs/screenshots/smoke-fp.png)
+
+## Nouveautés v0.3.10
+
+- **Déballage refait (visuel)** : le colis ouvert est un VRAI carton aux
+  rabats rabattus (mesh procédural avec parois épaisses), et chaque objet
+  a désormais SA forme — vase et bougie en cylindre 8 pans, montre et
+  chaussette en sphère, boîtes en cubes plats… et **LA BAGUE en anneau
+  doré** qui tourne sur lui-même, surmontée d'un pilier de lumière quand
+  elle sort d'un carton. Les objets **sortent du carton avec une animation
+  « pop »** (ease-out-back) et le carton fait un petit bond.
+- **Fix livraisons (le vrai bug du « 2e commande qui n'arrive jamais »)** :
+  les colis commandés à l'ordinateur étaient payés DAVANCE puis RE-DÉBITÉS
+  à la livraison — solde à sec = colis payés jamais livrés. Désormais la
+  livraison d'un colis déjà payé ne débite plus rien, et si le pool du
+  fournisseur s'épuise entre-temps, les colis non livrés sont
+  **remboursés**. La commande est plafonnée au pool restant.
+- Test de rendu du déballage (`unbox_snap`) : carton + formes rendus
+  offscreen, assertions sur les pixels kraft/or, PNG de vérification.
 
 ## Nouveautés v0.3.9
 
@@ -93,7 +111,7 @@ Premier lancement : écran-titre → choisis le nombre total de colis (slider
 
 > **Tu veux juste JOUER ?** Télécharge l'exécutable prêt à lancer sur la page
 > [Releases](https://github.com/Ahom165/hangar33/releases/latest)
-> (`hangar33-v0.3.9-windows-x64.zip` → décompresser → double-cliquer
+> (`hangar33-v0.3.10-windows-x64.zip` → décompresser → double-cliquer
 > `hangar33.exe`). Aucune installation requise.
 
 Le crate `h33-app` est un binaire natif : le cible MSVC a besoin du **linker

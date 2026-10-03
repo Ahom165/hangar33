@@ -87,15 +87,30 @@ impl Economy {
         self.packages_left == 0
     }
 
-    /// Achète un colis. Renvoie None si plus d'argent ou pool vide.
+    /// Achète un colis (paiement immédiat — achat dock / auto-acheteur).
+    /// Renvoie None si plus d'argent ou pool vide.
     /// NOTE : le contenu n'est rollé qu'à l'ouverture — seule la présence
     /// de la bague est déterminée ici (par l'id), pour que le serveur
     /// multijoueur puisse la valider sans connaître le contenu.
     pub fn buy_package(&mut self) -> Option<PackagePurchase> {
-        if self.money < balance::PACKAGE_PRICE_EUR || self.pool_empty() {
+        if self.money < balance::PACKAGE_PRICE_EUR {
             return None;
         }
+        let p = self.allocate_package()?;
         self.spend(balance::PACKAGE_PRICE_EUR);
+        Some(p)
+    }
+
+    /// Alloue un colis SANS paiement : la mécanique de pool/id/bague,
+    /// sans le débit. Destiné aux colis DÉJÀ PAYÉS D'AVANCE par
+    /// `Sim::order_packages` (le paiement a été fait au moment de la
+    /// commande — re-débitr ici ferait payer le colis DEUX FOIS, et si
+    /// le solde était à sec à la livraison, les colis payés n'arriveraient
+    /// jamais — bug v0.3.x « la 2e commande n'arrive pas »).
+    pub fn allocate_package(&mut self) -> Option<PackagePurchase> {
+        if self.pool_empty() {
+            return None;
+        }
         let id = self.next_package_id;
         self.next_package_id += 1;
         self.packages_left -= 1;

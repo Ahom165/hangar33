@@ -55,6 +55,9 @@ pub struct FloorPackage {
     pub contains_ring: bool,
     /// None = colis fermé ; Some(liste) = ouvert.
     pub items: Option<Vec<ItemKind>>,
+    /// Instant d'ouverture (pour l'animation "pop" des rabats/objets côté
+    /// rendu). None tant que le colis est fermé.
+    pub opened_at_s: Option<f64>,
 }
 
 // ======================================================================
@@ -186,38 +189,70 @@ impl Sim {
                     });
                 }
                 DeliveryKind::Packages(n) => {
-                    // Autant que possible tout de suite, le reste attend un slot.
+                    // Colis DÉJÀ PAYÉS au moment de la commande :
+                    // allocation SANS re-débit (bug v0.3.x : buy_package
+                    // re-débitait le prix ici, et un solde à sec bloquait
+                    // la livraison de colis pourtant payés).
                     let space = (balance::FLOOR_PACKAGE_LIMIT - self.floor.len()) as u64;
-                    let drop = n.min(space);
-                    for _ in 0..drop {
-                        if let Some(p) = self.eco.buy_package() {
-                            self.floor.push(FloorPackage { id: p.id, contains_ring: p.contains_ring, items: None });
-                        } else {
-                            break;
+                    let mut placed = 0u64;
+                    for _ in 0..n.min(space) {
+                        match self.eco.allocate_package() {
+                            Some(p) => {
+                                self.floor.push(FloorPackage { id: p.id, contains_ring: p.contains_ring, items: None, opened_at_s: None });
+                                placed += 1;
+                            }
+                            None => break, // pool épuisé -> remboursement ci-dessous
                         }
                     }
-                    self.pending_packages += n - drop;
-                    self.events.push(GameEvent::Toast {
-                        text: format!(
-                            "Livraison : {drop} colis sur la zone de palettes (mur SUD, marqueur doré)."
-                        ),
-                        severity: Severity::Info,
-                    });
+                    let reste = n - placed;
+                    if reste > 0 && self.eco.pool_empty() {
+                        // Fournisseur à sec : on rembourse ce qui n'ira jamais.
+                        let refund = reste as f64 * balance::PACKAGE_PRICE_EUR;
+                        self.eco.earn(refund);
+                        self.events.push(GameEvent::Toast {
+                            text: format!("Livraison partielle : {placed} colis. Pool épuisé — {reste} colis remboursés ({refund:.0} €)."),
+                            severity: Severity::Warn,
+                        });
+                    } else if reste > 0 {
+                        self.pending_packages += reste;
+                        self.events.push(GameEvent::Toast {
+                            text: format!("Livraison : {placed} colis sur la zone de palettes (mur SUD, marqueur doré). {reste} en attente de place."),
+                            severity: Severity::Info,
+                        });
+                    } else {
+                        self.events.push(GameEvent::Toast {
+                            text: format!("Livraison : {placed} colis sur la zone de palettes (mur SUD, marqueur doré)."),
+                            severity: Severity::Info,
+                        });
+                    }
                 }
             }
         }
         // Écoulement des colis en attente (1 slot libéré = 1 colis livré).
+        // Ces colis sont aussi déjà payés : allocation sans re-débit.
         if self.pending_packages > 0 {
-            let space = (balance::FLOOR_PACKAGE_LIMIT - self.floor.len()) as u64;
-            let drop = self.pending_packages.min(space);
-            for _ in 0..drop {
-                if let Some(p) = self.eco.buy_package() {
-                    self.floor.push(FloorPackage { id: p.id, contains_ring: p.contains_ring, items: None });
-                } else {
-                    break;
+            if self.eco.pool_empty() {
+                let refund = self.pending_packages as f64 * balance::PACKAGE_PRICE_EUR;
+                self.eco.earn(refund);
+                self.events.push(GameEvent::Toast {
+                    text: format!("Pool épuisé : {0} colis en attente remboursés ({refund:.0} €).", self.pending_packages),
+                    severity: Severity::Warn,
+                });
+                self.pending_packages = 0;
+            } else {
+                let space = (balance::FLOOR_PACKAGE_LIMIT - self.floor.len()) as u64;
+                let mut placed = 0u64;
+                for _ in 0..self.pending_packages.min(space) {
+                    match self.eco.allocate_package() {
+                        Some(p) => {
+                            self.floor.push(FloorPackage { id: p.id, contains_ring: p.contains_ring, items: None, opened_at_s: None });
+                            placed += 1;
+                        }
+                        None => break,
+                    }
                 }
+                self.pending_packages -= placed;
             }
-            self.pending_packages -= drop;
         }
     }
 
@@ -597,7 +632,7 @@ impl Sim {
             self.events.push(GameEvent::NoMoney);
             return false;
         };
-        self.floor.push(FloorPackage { id: p.id, contains_ring: p.contains_ring, items: None });
+        self.floor.push(FloorPackage { id: p.id, contains_ring: p.contains_ring, items: None, opened_at_s: None });
         true
     }
 
@@ -613,6 +648,7 @@ impl Sim {
         let contents = self.roll_package_contents(contains_ring);
         let pkg = self.floor.get_mut(pi)?;
         pkg.items = Some(contents.clone());
+        pkg.opened_at_s = Some(self.elapsed_s);
         Some(contents)
     }
 
@@ -726,9 +762,15 @@ impl Sim {
     }
 
     /// Commande `n` colis payés d'avance, livrés sur la zone de palettes.
+    /// La commande est plafonnée au pool restant (on ne prend l'argent que
+    /// de ce qui sera réellement livré).
     pub fn order_packages(&mut self, n: u64) -> Result<(), &'static str> {
         if n == 0 {
             return Err("Quantité nulle");
+        }
+        let n = n.min(self.eco.packages_left);
+        if n == 0 {
+            return Err("Pool de colis épuisé");
         }
         let total = balance::PACKAGE_PRICE_EUR * n as f64;
         if !self.eco.spend(total) {
