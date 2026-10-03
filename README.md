@@ -77,6 +77,33 @@ cargo run -p h33-app --release
 Premier lancement : écran-titre → choisis le nombre total de colis (slider
 1 M → 500 M) → COMMENCER.
 
+### Compiler sous Windows
+
+Le crate `h33-app` est un binaire natif : le cible MSVC a besoin du **linker
+`link.exe`** fourni par les Build Tools Visual Studio (VS Code ne suffit PAS).
+Deux options :
+
+**Option A (recommandée) — installer MSVC Build Tools** via winget
+(terminal PowerShell) :
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+(~7 Go, un seul redémarrage de terminal ensuite ; `cargo b -r` fonctionne
+directement, c'est la cible par défaut de rustup sur Windows.)
+
+**Option B (léger, sans Visual Studio) — toolchain GNU** :
+
+```powershell
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup default stable-x86_64-pc-windows-gnu
+cargo b -r
+```
+
+Dans les deux cas, `target\release\hangar33.exe` est le jeu ; il se déplace
+librement (aucune DLL externe requise).
+
 ### Flags utiles
 
 | Flag | Effet |

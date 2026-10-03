@@ -18,6 +18,7 @@
 //! Aucune sortie n'est attendue du process : on spawn détaché et on
 //! rend la main immédiatement (le jeu ne se fige jamais sur une blague).
 
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -63,7 +64,9 @@ fn iso_search_dirs() -> Vec<PathBuf> {
 }
 
 /// Parmi des chemins d'ISO, préfère une Windows (le rêve), sinon la première.
-/// (pur — testable sans disque)
+/// (pur — testable sans disque ; côté Windows, c'est le script Hyper-V qui
+/// fait sa propre préférence en PowerShell)
+#[cfg(unix)]
 fn prefer_windows_iso(paths: &[PathBuf]) -> Option<PathBuf> {
     let win = paths.iter().find(|p| {
         p.file_name()
