@@ -79,6 +79,11 @@ Premier lancement : écran-titre → choisis le nombre total de colis (slider
 
 ### Compiler sous Windows
 
+> **Tu veux juste JOUER ?** Télécharge l'exécutable prêt à lancer sur la page
+> [Releases](https://github.com/Ahom165/hangar33/releases/latest)
+> (`hangar33-v0.3.8-windows-x64.zip` → décompresser → double-cliquer
+> `hangar33.exe`). Aucune installation requise.
+
 Le crate `h33-app` est un binaire natif : le cible MSVC a besoin du **linker
 `link.exe`** fourni par les Build Tools Visual Studio (VS Code ne suffit PAS).
 Deux options :
@@ -93,9 +98,16 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passi
 (~7 Go, un seul redémarrage de terminal ensuite ; `cargo b -r` fonctionne
 directement, c'est la cible par défaut de rustup sur Windows.)
 
-**Option B (léger, sans Visual Studio) — toolchain GNU** :
+**Option B — toolchain GNU** : ⚠️ rustup n'embarque PAS MinGW — sans lui la
+build échoue avec `error calling dlltool 'dlltool.exe': program not found`
+(c'est le même type d'erreur que le `link.exe` manquant, la toolchain GNU
+n'est donc « sans installation » que si tu as DÉJÀ un MinGW-w64 dans ton
+PATH, par ex. MSYS2) :
 
 ```powershell
+winget install MSYS2.MSYS2          # puis dans le shell MSYS2 :
+# pacman -S --noconfirm mingw-w64-x86_64-toolchain
+# ajouter C:\msys64\mingw64\bin au PATH Windows, puis :
 rustup toolchain install stable-x86_64-pc-windows-gnu
 rustup default stable-x86_64-pc-windows-gnu
 cargo b -r
